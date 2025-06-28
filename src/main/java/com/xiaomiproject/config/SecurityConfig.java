@@ -40,6 +40,7 @@ public class SecurityConfig extends WebSecurityConfigurerAdapter {
     }
 
     // 配置HTTP安全策略
+    // 仅用于调试！
     @Override
     protected void configure(HttpSecurity http) throws Exception {
         http

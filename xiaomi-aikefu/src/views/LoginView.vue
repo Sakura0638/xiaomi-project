@@ -24,13 +24,13 @@
 <script setup>
 import { ref } from 'vue';
 import axios from 'axios';
-// import { useRouter } from 'vue-router'; // 登录成功后可以跳转到主页
+import { useRouter } from 'vue-router';
 
 const username = ref('');
 const password = ref('');
 const message = ref('');
 const isError = ref(false);
-// const router = useRouter();
+const router = useRouter();
 
 const handleLogin = async () => {
   if (!username.value || !password.value) {
@@ -39,23 +39,39 @@ const handleLogin = async () => {
     return;
   }
 
+  message.value = '正在登录中...'; // 优化用户体验，立即给出反馈
+  isError.value = false;
+
   try {
+    // --- 这里是修改的关键 ---
+    // 将用户名和密码作为请求体发送
     const response = await axios.post('/api/auth/login', {
       username: username.value,
       password: password.value
     });
 
-    message.value = response.data;
+    // 假设后端成功时返回 "用户登录成功!"
+    message.value = response.data + " 即将进入聊天室...";
     isError.value = false;
 
-    // 登录成功后，浏览器会自动保存JSESSIONID cookie。
-    // 在这里你可以跳转到应用的主页
-    // router.push('/dashboard'); // 假设主页路由是/dashboard
+    setTimeout(() => {
+      router.push('/chat');
+    }, 1000);
 
   } catch (error) {
     isError.value = true;
-    // Spring Security 默认的认证失败是401 Unauthorized，没有具体的body
-    message.value = '登录失败：用户名或密码错误。';
+    if (error.response) {
+      // 尝试从后端获取更具体的错误信息
+      // 401 Unauthorized, 403 Forbidden etc.
+      if (error.response.status === 401 || error.response.status === 403) {
+        message.value = '登录失败：用户名或密码错误。';
+      } else {
+        message.value = `登录时发生错误: ${error.response.data || error.response.statusText}`;
+      }
+    } else {
+      // 网络错误等
+      message.value = '无法连接到服务器，请检查网络。';
+    }
   }
 };
 </script>
