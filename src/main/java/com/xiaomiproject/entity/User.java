@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import javax.persistence.*;
+import java.time.LocalDateTime;
 
 @Entity
 @NoArgsConstructor
@@ -22,4 +23,10 @@ public class User {
     private String password;
 
     private String roles = "ROLE_USER";
+
+    @Column(name = "registration_time", nullable = false, updatable = false)
+    private LocalDateTime registrationTime;
+
+    @Column(name = "last_login_time")
+    private LocalDateTime lastLoginTime;
 }

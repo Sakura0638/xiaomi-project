@@ -6,6 +6,7 @@ import com.xiaomiproject.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import java.time.LocalDateTime;
 
 @Service
 public class AuthService {
@@ -30,6 +31,7 @@ public class AuthService {
         // 默认角色为USER
         user.setRoles("ROLE_USER");
 
+        user.setRegistrationTime(LocalDateTime.now());
         userRepository.save(user);
     }
 }
