@@ -17,4 +17,6 @@ public class ConversationHistory {
     private String answer;
     // 使用Java 8的LocalDateTime
     private LocalDateTime timestamp;
+    @Column(nullable = false)
+    private String conversationId; // 用于标识同一组对话
 }

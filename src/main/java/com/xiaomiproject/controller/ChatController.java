@@ -1,6 +1,7 @@
 package com.xiaomiproject.controller;
 
-
+import com.xiaomiproject.dto.ChatResponse;
+import com.xiaomiproject.dto.QuestionRequest;
 import com.xiaomiproject.service.ChatService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -18,24 +19,34 @@ public class ChatController {
     @Autowired
     private ChatService chatService;
 
+    /**
+     * 处理用户的提问请求，支持多轮对话
+     * @param request 包含问题和可选的 conversationId
+     * @param principal Spring Security提供的当前用户信息
+     * @return 包含AI回答和 conversationId 的响应
+     */
     @PostMapping("/ask")
-    public ResponseEntity<String> askQuestion(@RequestBody QuestionRequest request, Principal principal) {
-        // Principal 对象由 Spring Security 在用户登录后自动注入
-        // 它包含了当前认证用户的信息
+    // 1. 修改方法签名，返回类型为 ResponseEntity<ChatResponse>
+    public ResponseEntity<ChatResponse> askQuestion(@RequestBody QuestionRequest request, Principal principal) {
+        // 2. 权限和参数校验
         if (principal == null) {
-            // 理论上 Spring Security 会拦截未认证的请求，但这是一个额外的保险
-            return ResponseEntity.status(401).body("未经授权，请先登录。");
+            // 对于实际的401错误，最好通过Spring Security的异常处理来全局管理，
+            // 但在这里返回一个空的ChatResponse并设置状态码也是一种方式。
+            // 不过，理论上Security会先拦截，走不到这里。
+            return ResponseEntity.status(401).build();
         }
 
+        if (request.getQuestion() == null || request.getQuestion().trim().isEmpty()) {
+            // 如果请求无效，可以返回一个包含错误信息的ChatResponse
+            ChatResponse errorResponse = new ChatResponse("问题内容不能为空。", request.getConversationId());
+            return ResponseEntity.badRequest().body(errorResponse);
+        }
+
+        // 3. 执行核心逻辑（只保留第二套逻辑）
         String username = principal.getName();
-        String question = request.getQuestion();
+        ChatResponse response = chatService.getAnswer(request, username);
 
-        if (question == null || question.trim().isEmpty()) {
-            return ResponseEntity.badRequest().body("问题内容不能为空。");
-        }
-
-        String answer = chatService.getAnswer(question, username);
-
-        return ResponseEntity.ok(answer);
+        // 4. 返回正确的响应
+        return ResponseEntity.ok(response);
     }
 }
