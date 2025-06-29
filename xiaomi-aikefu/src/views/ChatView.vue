@@ -1,7 +1,5 @@
 <template>
-  <!-- 单一的根元素 -->
   <div class="page-container">
-    <!-- 历史记录侧边栏 -->
     <div class="history-panel">
       <div class="history-header">
         <span>对话历史</span>
@@ -16,45 +14,37 @@
             class="history-item"
             :class="{ 'active': item.conversationId === currentConversationId }"
         >
-          <!-- 将内容包裹在一个div中，方便flex布局 -->
           <div class="history-content" @click="loadHistory(item)">
             <p class="history-question">{{ item.question }}</p>
             <span class="history-time">{{ formatTime(item.timestamp) }}</span>
           </div>
-          <!-- 新增的删除按钮 -->
           <button @click.stop="deleteConversation(item.conversationId)" class="delete-btn" title="删除对话">
-            × <!-- 这是一个简单的 "x" 叉号 -->
+            ×
           </button>
         </div>
         <p v-if="!conversationHistory.length" class="no-history">暂无历史记录</p>
       </div>
     </div>
 
-    <!-- 聊天主区域 -->
     <div class="chat-main-area">
       <div class="header">AI 客服</div>
       <div class="message-list" ref="messageList">
-        <!-- 消息列表渲染 -->
-        <div v-for="(message, index) in messages" :key="index" class="message-item" :class="message.sender">
-          <div class="avatar" :class="message.sender">
-            {{ message.sender === 'user' ? '我' : 'AI' }}
+        <div v-for="(message, index) in messages" :key="index" :class="['message-item', message.sender]">
+          <!-- 用户头像图片 -->
+          <div class="avatar user" v-if="message.sender === 'user'">
+            <img src="/touxaing.jpg" alt="用户头像" class="avatar-img" />
+          </div>
+          <!-- AI 图片头像 -->
+          <div class="avatar assistant" v-else>
+            <img src="/background.jpg" alt="AI头像" class="avatar-img" />
           </div>
           <div class="message-content">
-            <div class="text">{{ message.text }}</div>
-          </div>
-        </div>
-        <!-- 加载提示 -->
-        <div v-if="isLoading" class="message-item assistant">
-          <div class="avatar assistant">AI</div>
-          <div class="message-content">
-            <div class="text loading">
-              <span></span><span></span><span></span>
-            </div>
+            <div class="text" v-html="message.text"></div>
           </div>
         </div>
       </div>
+
       <div class="chat-input-area">
-        <!-- 输入表单 -->
         <form @submit.prevent="sendMessage" class="input-form">
           <input
               type="text"
@@ -63,19 +53,19 @@
               :disabled="isLoading"
               autocomplete="off"
           />
-          <button type="submit" :disabled="isLoading || !newMessage.trim()">
-            发送
-          </button>
+          <button type="submit" :disabled="isLoading || !newMessage.trim()">发送</button>
         </form>
       </div>
     </div>
   </div>
 </template>
+
+
 <script setup>
 import { ref, nextTick, onMounted } from 'vue';
+import MarkdownIt from 'markdown-it';
 import axios from 'axios';
 
-// 响应式数据
 const conversationHistory = ref([]);
 const messages = ref([]);
 const newMessage = ref('');
@@ -83,43 +73,79 @@ const isLoading = ref(false);
 const messageList = ref(null);
 const currentConversationId = ref(null);
 
-// --- 新增方法：删除对话 ---
-const deleteConversation = async (conversationId) => {
-  // 友好地向用户确认
-  if (!confirm("您确定要删除这条对话记录吗？此操作不可恢复。")) {
-    return;
+const md = new MarkdownIt({
+  breaks: true,         // 支持换行
+  linkify: true,        // 自动链接
+  html: false           // 禁止原始 HTML（可提高安全）
+});
+
+const sendMessage = async () => {
+  const userMessageText = newMessage.value.trim();
+  if (!userMessageText || isLoading.value) return;
+
+  isLoading.value = true;
+  messages.value.push({ sender: 'user', text: userMessageText });
+  messages.value.push({ sender: 'assistant', text: '',raw:'' });
+
+  const question = newMessage.value;
+  newMessage.value = '';
+
+  await nextTick();
+  scrollToBottom();
+
+  let url = `/api/chat/stream-ask?question=${encodeURIComponent(question)}`;
+  if (currentConversationId.value) {
+    url += `&conversationId=${encodeURIComponent(currentConversationId.value)}`;
   }
 
-  try {
-    // 调用后端的DELETE API
-    await axios.delete(`/api/history/${conversationId}`);
+  const eventSource = new EventSource(url);
 
-    // 从前端的历史记录列表中移除被删除的项，实现实时更新
-    conversationHistory.value = conversationHistory.value.filter(
-        item => item.conversationId !== conversationId
-    );
+  eventSource.onopen = function() {
+    console.log("Connection to server opened.");
+  };
 
-    // 如果删除的是当前正在查看的对话，则新建一个对话
-    if (currentConversationId.value === conversationId) {
-      startNewConversation();
+  eventSource.onmessage = function (event) {
+    const lastMessageIndex = messages.value.length - 1;
+    const lastMessage = messages.value[lastMessageIndex];
+
+    if (lastMessage && lastMessage.sender === 'assistant') {
+      // 原始 Markdown 拼接
+      const updatedRawText = (lastMessage.raw || '') + event.data;
+
+      // 渲染为 HTML
+      const html = md.render(updatedRawText);
+
+      // 更新消息（包括原始 raw 字符串，以便后续继续拼接）
+      messages.value[lastMessageIndex] = {
+        ...lastMessage,
+        raw: updatedRawText,      // ⬅️ 保留原始 Markdown
+        text: html                // ⬅️ 渲染成 HTML
+      };
+
+      nextTick(() => {
+        scrollToBottom();
+      });
     }
+  };
 
-  } catch (error) {
-    console.error("删除对话失败:", error);
-    // 可以在这里给用户一个错误提示
-    alert(`删除失败：${error.response?.data || '请稍后再试'}`);
-  }
+  eventSource.onerror = function (err) {
+    console.error("EventSource failed:", err);
+    const lastMessage = messages.value[messages.value.length - 1];
+    if (lastMessage && lastMessage.sender === 'assistant' && lastMessage.text === '') {
+      lastMessage.text = '流式连接出错，请重试。';
+    }
+    eventSource.close();
+    isLoading.value = false;
+    fetchHistory();
+  };
 };
 
-// --- 新增方法：开始新对话 ---
 const startNewConversation = () => {
-  messages.value = [
-    { sender: 'assistant', text: '您好！有什么新问题吗？' }
-  ];
-  currentConversationId.value = null; // 清空会话ID，这很关键
+  messages.value = [{ sender: 'assistant', text: '您好！有什么新问题吗？' }];
+  currentConversationId.value = null;
+  isLoading.value = false;
 };
 
-// 获取历史记录
 const fetchHistory = async () => {
   try {
     const response = await axios.get('/api/history');
@@ -131,17 +157,25 @@ const fetchHistory = async () => {
 
 const loadHistory = async (historyItem) => {
   try {
-    // 之前这里的逻辑是错误的，现在改为调用后端获取完整对话
     const response = await axios.get(`/api/history/${historyItem.conversationId}`);
     const fullConversation = response.data;
 
     messages.value = [];
+
+    // ✅ 使用 markdown-it 渲染历史内容
     fullConversation.forEach(item => {
-      messages.value.push({ sender: 'user', text: item.question });
-      messages.value.push({ sender: 'assistant', text: item.answer });
+      messages.value.push({
+        sender: 'user',
+        text: md.render(item.question),
+        raw: item.question
+      });
+      messages.value.push({
+        sender: 'assistant',
+        text: md.render(item.answer),
+        raw: item.answer
+      });
     });
 
-    // 点击加载历史对话时，也将会话ID设置为当前会话ID
     currentConversationId.value = historyItem.conversationId;
 
     await nextTick();
@@ -151,253 +185,179 @@ const loadHistory = async (historyItem) => {
   }
 };
 
-// 格式化时间显示
-const formatTime = (timestamp) => {
-  if (!timestamp) return '';
-
-  const date = new Date(timestamp);
-  return `
-    ${(date.getMonth() + 1).toString().padStart(2, '0')}-
-    ${date.getDate().toString().padStart(2, '0')}
-    ${date.getHours().toString().padStart(2, '0')}:
-    ${date.getMinutes().toString().padStart(2, '0')}
-  `.replace(/\s+/g, '');
-};
-
-// 发送消息
-const sendMessage = async () => {
-  const userMessageText = newMessage.value.trim();
-  if (!userMessageText || isLoading.value) return;
-
-  // 添加用户消息
-  messages.value.push({
-    sender: 'user',
-    text: userMessageText
-  });
-  newMessage.value = '';
-  isLoading.value = true;
-
-  await nextTick();
-  scrollToBottom();
+const deleteConversation = async (conversationId) => {
+  if (!confirm("您确定要删除这条对话记录吗？此操作不可恢复。")) {
+    return;
+  }
 
   try {
-    // 发送请求获取AI回复
-    const response = await axios.post('/api/chat/ask', {
-      question: userMessageText,
-      conversationId: currentConversationId.value
-    });
+    await axios.delete(`/api/history/${conversationId}`);
+    conversationHistory.value = conversationHistory.value.filter(
+        item => item.conversationId !== conversationId
+    );
 
-    const chatResponse = response.data;
-
-    // 将AI的回复添加到列表
-    messages.value.push({
-      sender: 'assistant',
-      text: chatResponse.answer
-    });
-
-    // !!! 关键：更新前端的会话ID !!!
-    currentConversationId.value = chatResponse.conversationId;
-  } catch (error) {
-    let errorText = '发生未知错误，请稍后再试。';
-
-    if (error.response) {
-      errorText = `请求失败：${
-          error.response.data || error.response.statusText
-      }`;
-    } else if (error.request) {
-      errorText = '无法连接到服务器，请检查您的网络。';
+    if (currentConversationId.value === conversationId) {
+      startNewConversation();
     }
-
-    messages.value.push({
-      sender: 'assistant',
-      text: errorText
-    });
-  } finally {
-    isLoading.value = false;
-    await nextTick();
-    scrollToBottom();
-    fetchHistory();
+  } catch (error) {
+    console.error("删除对话失败:", error);
+    alert(`删除失败：${error.response?.data || '请稍后再试'}`);
   }
 };
 
-// 滚动到底部
+const formatTime = (timestamp) => {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+  const day = date.getDate().toString().padStart(2, '0');
+  const hours = date.getHours().toString().padStart(2, '0');
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  return `${month}-${day} ${hours}:${minutes}`;
+};
+
+
 const scrollToBottom = () => {
   if (messageList.value) {
-    messageList.value.scrollTop = messageList.value.scrollHeight;
+    messageList.value.scrollTo({ top: messageList.value.scrollHeight, behavior: 'smooth' });
   }
 };
 
 onMounted(() => {
-  // 初始时不加载欢迎语，而是直接调用新建对话
   startNewConversation();
   fetchHistory();
 });
 </script>
 
 <style scoped>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap');
+
+:root {
+  --font-family: 'Noto Sans SC', sans-serif;
+  --primary-color: #5e5ce6;
+  --primary-hover-color: #4845d3;
+  --text-color-light: #f5f5f7;
+  --text-color-dark: #1d1d1f;
+  --text-color-muted: rgba(255, 255, 255, 0.55);
+  --border-color: rgba(255, 255, 255, 0.15);
+  --bubble-user-bg: var(--primary-color);
+  --bubble-ai-bg: rgba(255, 255, 255, 0.1);
+  --panel-bg: rgba(28, 28, 30, 0.5);
+  --panel-bg-light: rgba(255, 255, 255, 0.08);
+}
+
 .page-container {
-  display: flex;
+  font-family: var(--font-family);
   height: 100vh;
   width: 100vw;
-  background-color: #f0f2f5;
-  overflow: hidden;
-}
-
-.history-item {
-  /* 使用flex布局来放置内容和删除按钮 */
+  background-image: url('/background.jpg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 10px 12px 16px; /* 调整内边距 */
-  /* ... 其他 .history-item 样式 ... */
+  padding: 20px;
+  box-sizing: border-box;
+  color: var(--text-color-light);
 }
 
-.history-content {
-  flex-grow: 1; /* 让内容区填充大部分空间 */
-  cursor: pointer;
-  overflow: hidden; /* 防止内容过长影响布局 */
-}
-.history-content:hover .history-question {
-  color: #007bff; /* 悬浮时标题变色，提升可点击感 */
-}
-
-.history-question {
-  /* ... */
-  transition: color 0.2s;
+.history-panel,
+.chat-main-area {
+  height: 100%;
+  background: var(--panel-bg);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  transition: all 0.3s ease;
+  border-radius: 24px;
 }
 
-/* 新增的删除按钮样式 */
-.delete-btn {
-  background: none;
-  border: none;
-  color: #aaa;
-  font-size: 22px;
-  font-weight: bold;
-  cursor: pointer;
-  padding: 0 10px;
-  border-radius: 50%;
-  line-height: 1;
-  opacity: 0; /* 默认隐藏 */
-  transition: opacity 0.2s, color 0.2s;
-  flex-shrink: 0; /* 防止被压缩 */
-}
-
-/* 当鼠标悬浮在整个历史记录项上时，显示删除按钮 */
-.history-item:hover .delete-btn {
-  opacity: 1;
-}
-
-.delete-btn:hover {
-  color: #f44336; /* 悬浮时变红色 */
-}
-
-/* 当前激活项的样式 */
-.history-item.active {
-  background-color: #e9f5ff;
-}
-
-.history-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  /* ... */
-}
-.new-chat-btn {
-  background-color: #007bff;
-  color: white;
-  border: none;
-  border-radius: 5px;
-  padding: 5px 10px;
-  cursor: pointer;
-  font-size: 14px;
-}
-.new-chat-btn:hover {
-  background-color: #0056b3;
-}
-
-/* 历史记录侧边栏样式 */
 .history-panel {
   width: 280px;
   flex-shrink: 0;
-  background-color: #ffffff;
-  border-right: 1px solid #e0e0e0;
+  display: flex;
+  flex-direction: column;
+  margin-right: 20px;
+}
+
+.chat-main-area {
+  flex-grow: 1;
   display: flex;
   flex-direction: column;
 }
 
-.history-header {
-  padding: 16px;
-  font-weight: bold;
+.history-header,
+.header {
+  padding: 20px;
+  font-weight: 700;
   font-size: 18px;
-  text-align: center;
-  border-bottom: 1px solid #e0e0e0;
   flex-shrink: 0;
-  color: #333;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.new-chat-btn {
+  background: none;
+  border: none;
+  color: var(--text-color-light);
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-weight: 500;
+  background-color: var(--primary-color);
+  transition: all 0.2s;
+}
+.new-chat-btn:hover {
+  background-color: var(--primary-hover-color);
+  transform: scale(1.05);
 }
 
 .history-list {
   flex-grow: 1;
   overflow-y: auto;
-}
-
-.history-list::-webkit-scrollbar {
-  width: 6px;
-}
-
-.history-list::-webkit-scrollbar-thumb {
-  background: #ccc;
-  border-radius: 3px;
+  padding: 8px;
 }
 
 .history-item {
-  padding: 12px 16px;
-  border-bottom: 1px solid #eee;
-  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 10px;
+  margin: 4px 8px;
+  border-radius: 8px;
   transition: background-color 0.2s;
 }
-
-.history-item:hover {
-  background-color: #e9ecef;
+.history-item.active {
+  background-color: var(--primary-color);
 }
-
+.history-content {
+  flex-grow: 1;
+  cursor: pointer;
+  overflow: hidden;
+}
 .history-question {
   font-weight: 500;
-  color: #333;
-  margin: 0 0 5px 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  margin: 0 0 4px 0;
 }
-
 .history-time {
   font-size: 12px;
-  color: #888;
+  color: var(--text-color-muted);
 }
-
-.no-history {
-  text-align: center;
-  color: #999;
-  margin-top: 20px;
-  font-size: 14px;
+.delete-btn {
+  font-size: 20px;
+  opacity: 0;
+  color: var(--text-color-muted);
+  transition: all 0.2s;
 }
-
-/* 聊天主区域样式 */
-.chat-main-area {
-  flex-grow: 1;
-  display: flex;
-  flex-direction: column;
-  background-color: #f7f7f7;
+.history-item:hover .delete-btn {
+  opacity: 0.8;
 }
-
-.header {
-  padding: 16px 24px;
-  background-color: #ffffff;
-  font-weight: bold;
-  font-size: 18px;
-  text-align: left;
-  border-bottom: 1px solid #e0e0e0;
-  flex-shrink: 0;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+.delete-btn:hover {
+  color: #ff6b6b;
+  transform: scale(1.1);
 }
 
 .message-list {
@@ -409,46 +369,37 @@ onMounted(() => {
   gap: 15px;
 }
 
-.message-list::-webkit-scrollbar {
-  width: 6px;
-}
-
-.message-list::-webkit-scrollbar-thumb {
-  background: #ccc;
-  border-radius: 3px;
-}
-
 .message-item {
   display: flex;
-  align-items: flex-end;
-  max-width: 70%;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: 85%;
 }
-
 .message-item.user {
   align-self: flex-end;
   flex-direction: row-reverse;
 }
+.message-item.assistant {
+  align-self: flex-start;
+}
 
 .avatar {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  font-weight: bold;
-  color: white;
+  font-size: 16px;
+  font-weight: 700;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
 }
-
 .avatar.user {
-  background-color: #007bff;
-  margin-left: 10px;
+  background-color: var(--primary-color);
 }
-
 .avatar.assistant {
   background-color: #6c757d;
-  margin-right: 10px;
 }
 
 .message-content {
@@ -457,94 +408,87 @@ onMounted(() => {
 }
 
 .text {
-  padding: 12px 16px;
+  padding: 10px 16px;
   border-radius: 18px;
-  line-height: 1.5;
+  line-height: 1.6;
+  word-wrap: break-word;
   white-space: pre-wrap;
+  animation: pop-in 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
-
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
 .message-item.user .text {
-  background-color: #007bff;
-  color: white;
-  border-bottom-right-radius: 4px;
+  background-color: var(--bubble-user-bg);
+  color: #000000;
+  border-bottom-right-radius: 6px;
 }
-
 .message-item.assistant .text {
-  background-color: #ffffff;
-  color: #333;
-  border-bottom-left-radius: 4px;
-  border: 1px solid #e9ecef;
+  background-color: var(--bubble-ai-bg);
+  color: #000000;
+  border-bottom-left-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-/* 输入区域样式 */
 .chat-input-area {
   padding: 16px 24px;
-  border-top: 1px solid #e0e0e0;
-  background-color: #ffffff;
+  border-top: 1px solid var(--border-color);
+  background-color: transparent;
   box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.05);
   flex-shrink: 0;
 }
 
 .input-form {
   display: flex;
+  align-items: center;
+  gap: 10px;
+  background-color: var(--panel-bg-light);
+  border-radius: 24px;
+  padding: 6px;
 }
 
 .input-form input {
   flex-grow: 1;
-  padding: 12px 18px;
-  border: 1px solid #ccc;
-  border-radius: 24px;
-  margin-right: 10px;
+  padding: 10px 18px;
+  border: none;
   font-size: 16px;
   outline: none;
-  transition: border-color 0.2s;
+  background-color: transparent;
+  color: var(--text-color-light);
 }
-
-.input-form input:focus {
-  border-color: #007bff;
+.input-form input::placeholder {
+  color: var(--text-color-muted);
 }
-
 .input-form button {
   padding: 0 24px;
   border: none;
-  background-color: #007bff;
+  background-color: var(--primary-color);
   color: white;
   border-radius: 24px;
   font-size: 16px;
   cursor: pointer;
   transition: background-color 0.2s;
 }
-
+.input-form button:hover:not(:disabled) {
+  background-color: var(--primary-hover-color);
+  transform: scale(1.05);
+}
 .input-form button:disabled {
-  background-color: #a0cfff;
+  background-color: #555;
   cursor: not-allowed;
 }
-
-/* 加载动画 */
-.loading span {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
+.avatar-img {
+  width: 100%;
+  height: 100%;
   border-radius: 50%;
-  background-color: #888;
-  margin: 0 2px;
-  animation: bounce 1.4s infinite ease-in-out both;
+  object-fit: cover;
 }
 
-.loading span:nth-child(1) {
-  animation-delay: -0.32s;
-}
-
-.loading span:nth-child(2) {
-  animation-delay: -0.16s;
-}
-
-@keyframes bounce {
-  0%, 80%, 100% {
-    transform: scale(0);
-  }
-  40% {
-    transform: scale(1.0);
-  }
-}
 </style>
