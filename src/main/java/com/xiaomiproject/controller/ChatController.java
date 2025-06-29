@@ -2,12 +2,11 @@ package com.xiaomiproject.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.xiaomiproject.dto.ChatResponse;
 import com.xiaomiproject.dto.QuestionRequest;
 import com.xiaomiproject.service.ChatService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -25,30 +24,16 @@ public class ChatController {
     @Autowired
     private ChatService chatService;
 
+    @Value("${llm.default.model}")
+    private String defaultModel;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
-    // 使用 CachedThreadPool 以便更好地处理并发请求
     private final ExecutorService sseExecutor = Executors.newCachedThreadPool();
-
-    @PostMapping("/ask")
-    public ResponseEntity<ChatResponse> askQuestion(@RequestBody QuestionRequest request, Principal principal) {
-        // ... (此方法保持不变)
-        if (principal == null) {
-            return ResponseEntity.status(401).build();
-        }
-
-        if (request.getQuestion() == null || request.getQuestion().trim().isEmpty()) {
-            ChatResponse errorResponse = new ChatResponse("问题内容不能为空。", request.getConversationId());
-            return ResponseEntity.badRequest().body(errorResponse);
-        }
-
-        String username = principal.getName();
-        ChatResponse response = chatService.getAnswer(request, username);
-        return ResponseEntity.ok(response);
-    }
 
     @GetMapping(value = "/stream-ask", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamAskQuestion(@RequestParam String question,
                                         @RequestParam(required = false) String conversationId,
+                                        @RequestParam(required = false) String model, // 接收模型类型参数
                                         Principal principal) {
         if (principal == null) {
             SseEmitter emitter = new SseEmitter();
@@ -61,24 +46,24 @@ public class ChatController {
                 ? UUID.randomUUID().toString()
                 : conversationId;
 
+        // 如果未指定模型，则使用默认模型
+        final String modelType = (model == null || model.trim().isEmpty()) ? defaultModel : model;
+
         sseExecutor.execute(() -> {
             try {
-                // --- 核心修改：先检查本地资源 ---
                 Optional<String> localAnswer = chatService.checkLocalSources(question);
 
                 if (localAnswer.isPresent()) {
-                    // 如果在知识库或缓存中找到答案，直接发送并关闭
                     emitter.send(SseEmitter.event().data(localAnswer.get()));
                     chatService.saveHistory(finalConversationId, question, localAnswer.get(), principal.getName());
                     emitter.complete();
                 } else {
-                    // 如果本地没有，才调用大模型流式接口
                     StringBuilder fullResponse = new StringBuilder();
                     QuestionRequest request = new QuestionRequest();
                     request.setQuestion(question);
                     request.setConversationId(finalConversationId);
 
-                    chatService.getAnswerStream(request, principal.getName())
+                    chatService.getAnswerStream(request, principal.getName(), modelType) // 传递模型类型
                             .subscribe(
                                     rawContent -> {
                                         String[] chunks = rawContent.split("data: ");

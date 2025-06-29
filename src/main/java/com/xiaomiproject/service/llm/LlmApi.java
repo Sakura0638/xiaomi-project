@@ -1,8 +1,6 @@
 package com.xiaomiproject.service.llm;
 
-
-import com.xiaomiproject.dto.ChatResponse;
-import com.xiaomiproject.dto.QuestionRequest;
+import reactor.core.publisher.Flux;
 
 public interface LlmApi {
 
@@ -13,9 +11,9 @@ public interface LlmApi {
     String getModelType();
 
     /**
-     * 调用大模型API获取回答
-     * @param request 包含问题和对话上下文的请求
-     * @return 包含回答和对话ID的响应
+     * 调用大模型API获取流式回答
+     * @param question 用户的问题
+     * @return 包含AI回答数据块的Flux流
      */
-    ChatResponse getCompletion(QuestionRequest request);
+    Flux<String> getCompletionStream(String question);
 }

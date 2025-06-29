@@ -1,6 +1,10 @@
 <template>
   <div class="page-container">
-    <div class="history-panel">
+    <!-- 折叠/展开控制按钮 -->
+    <button class="collapse-btn" @click="isCollapsed = !isCollapsed" :title="isCollapsed ? '展开历史记录' : '收起历史记录'">
+      {{ isCollapsed ? '⮞' : '⮜' }}
+    </button>
+    <div class="history-panel" v-show="!isCollapsed">
       <div class="history-header">
         <span>对话历史</span>
         <button @click="startNewConversation" class="new-chat-btn" title="开始新的对话">
@@ -26,7 +30,14 @@
       </div>
     </div>
 
-    <div class="chat-main-area">
+    <div class="chat-main-area" :class="{ 'full-width': isCollapsed }">
+      <div class="model-selector-area">
+        <label for="model-select">选择模型: </label>
+        <select v-model="selectedModel" id="model-select">
+          <option value="deepseek">DeepSeek</option>
+          <option value="dashscope">通义千问</option>
+        </select>
+      </div>
       <div class="header">AI 客服</div>
       <div class="message-list" ref="messageList">
         <div v-for="(message, index) in messages" :key="index" :class="['message-item', message.sender]">
@@ -72,6 +83,8 @@ const newMessage = ref('');
 const isLoading = ref(false);
 const messageList = ref(null);
 const currentConversationId = ref(null);
+const selectedModel = ref('deepseek');
+const isCollapsed = ref(false);
 
 const md = new MarkdownIt({
   breaks: true,         // 支持换行
@@ -93,7 +106,8 @@ const sendMessage = async () => {
   await nextTick();
   scrollToBottom();
 
-  let url = `/api/chat/stream-ask?question=${encodeURIComponent(question)}`;
+  // 修改URL，带上选择的模型参数
+  let url = `/api/chat/stream-ask?question=${encodeURIComponent(question)}&model=${selectedModel.value}`;
   if (currentConversationId.value) {
     url += `&conversationId=${encodeURIComponent(currentConversationId.value)}`;
   }
@@ -232,6 +246,7 @@ onMounted(() => {
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap');
 
 :root {
+  --background-color: #1e1e2f;
   --font-family: 'Noto Sans SC', sans-serif;
   --primary-color: #5e5ce6;
   --primary-hover-color: #4845d3;
@@ -490,5 +505,71 @@ onMounted(() => {
   border-radius: 50%;
   object-fit: cover;
 }
+
+.model-selector-area {
+  padding: 12px 24px;
+  border-top: 1px solid var(--border-color);
+  text-align: right;
+  font-size: 14px;
+  flex-shrink: 0;
+  background: var(--background-color);
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-selector-area select {
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-color-light);
+  border: 1px solid var(--border-color);
+  font-size: 14px;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  outline: none;
+}
+
+.model-selector-area select:hover {
+  background: rgba(255, 255, 255, 0.15);
+  cursor: pointer;
+}
+
+.model-selector-area select:focus {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px rgba(100, 150, 255, 0.3);
+}
+/* 折叠按钮 */
+.collapse-btn {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  z-index: 10;
+  background: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  font-size: 18px;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+.collapse-btn:hover {
+  transform: scale(1.1);
+}
+
+/* 折叠时让主区域撑满 */
+.chat-main-area.full-width {
+  width: 100%;
+}
+.history-panel {
+  transition: width 0.3s ease, opacity 0.3s ease;
+}
+.chat-main-area {
+  transition: width 0.3s ease;
+}
+
 
 </style>
